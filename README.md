@@ -1,225 +1,415 @@
 # RouteDuty
 
-**RouteDuty** is a full-stack trip planner for property-carrying commercial drivers. It accepts a current location, pickup location, drop-off location, and current 70-hour/8-day cycle usage, then returns:
+RouteDuty is a full-stack trip planner for property-carrying commercial drivers. It accepts the driver's current location, pickup location, drop-off location, and current 70-hour/8-day cycle usage.
+
+It then generates:
 
 - A road route through all three locations
 - Separate current-to-pickup and pickup-to-drop-off route legs
-- Major route instructions
-- A chronological Hours-of-Service itinerary
-- Mapped pickup, fuel, 30-minute break, 10-hour rest, 34-hour restart, and drop-off markers
-- Completed midnight-to-midnight Driver's Daily Log sheets for every trip day
-- Duty-status totals, route mileage, remarks, cycle recap, and print-ready output
+- A chronological Hours-of-Service trip schedule
+- Pickup, fuel, break, rest, restart, and drop-off markers
+- Completed Driver's Daily Log sheets for each trip day
+- Duty-status totals, mileage, remarks, and cycle information
+- Print-ready daily log output
 
-The required stack is **Django REST Framework** and **React/Vite**.
+The application was built using **Django REST Framework** and **React with Vite**.
 
-## Live application
+---
 
-- **Live frontend:** https://route-duty-eld-trip-planner.vercel.app
-- **Backend health check:** https://routeduty-api.onrender.com/api/health/
-- **GitHub repository:** https://github.com/zaafir7/route-duty-eld-trip-planner
-- **Video walkthrough:** Coming soon
+## Live Demo
 
-> The backend runs on Render's free tier and may require a short cold-start period after inactivity.
+- **Live Application:** https://route-duty-eld-trip-planner.vercel.app
+- **Backend API:** https://routeduty-api.onrender.com
+- **Backend Health Check:** https://routeduty-api.onrender.com/api/health/
+- **Loom Walkthrough:** https://www.loom.com/share/fd6d843e3637418abd2d773c78c242c9
+- **GitHub Repository:** https://github.com/zaafir7/route-duty-eld-trip-planner
 
-## Why this implementation is reliable
+> The backend is hosted on Render's free service and may take a short time to wake up after a period of inactivity.
 
-The scheduling engine independently models driving eligibility rather than treating every HOS limit as a ban on work. In particular:
+---
 
-- The **14-hour window** and **70-hour cycle** restrict additional driving, not non-driving work.
-- Pickup, drop-off, and fueling can finish even when a driving limit has been reached.
-- A reset is inserted only before the next driving segment when required.
-- Pickup, drop-off, and a 30-minute fuel stop can satisfy the required interruption of driving because they are consecutive non-driving periods of at least 30 minutes.
-- The schedule uses the route service's returned driving duration instead of a hard-coded average speed.
-- Fuel is inserted at every full 1,000-route-mile threshold.
-- Every generated daily log covers exactly 24 hours using one explicit home-terminal time basis.
-- Remarks are emitted only at actual itinerary events; a status continuing through midnight is not mislabeled as a new change.
-- Output integrity checks fail closed if route miles, driving duration, page boundaries, or daily totals do not reconcile.
-- Nonexistent or ambiguous local departure times at daylight-saving transitions are rejected rather than silently shifted.
-- Internal validation replays the finished itinerary and checks the 11-hour, 14-hour, 8-hour break, 70-hour, fuel, rest, and restart constraints.
+## Screenshots
 
-The detailed calculation design is documented in [`docs/HOS_LOGIC.md`](docs/HOS_LOGIC.md).
+### Trip Planner and Generated Summary
 
-## FMCSA assumptions implemented
+![RouteDuty trip planner and generated summary](docs/screenshots/route-overview.png)
 
-RouteDuty implements the assessment's property-carrying assumptions:
+### Generated Route Map
 
-- 11 hours maximum driving after 10 consecutive hours off duty
+![RouteDuty generated route map](docs/screenshots/route-map.png)
+
+### Driver Trip Itinerary
+
+![RouteDuty driver trip itinerary](docs/screenshots/driver-itinerary.png)
+
+### Daily Driver Log Sheet
+
+![RouteDuty daily driver log sheet](docs/screenshots/daily-log-sheet.png)
+
+---
+
+## Main Features
+
+### Trip Planning
+
+- Accepts the current location, pickup location, and drop-off location
+- Accepts the driver's current 70-hour/8-day cycle usage
+- Calculates road distance and estimated driving time
+- Separates the route into current-to-pickup and pickup-to-drop-off legs
+- Displays route instructions and mapped activity markers
+
+### Hours-of-Service Scheduling
+
+The scheduling engine applies the assessment's property-carrying assumptions:
+
+- Maximum of 11 driving hours after 10 consecutive hours off duty
 - No driving after the 14th consecutive hour after coming on duty
-- 30 consecutive minutes without driving after 8 cumulative driving hours
-- 70 hours on duty during 8 consecutive days
-- Optional 34-hour restart when the simplified cycle balance is exhausted
-- One hour on duty for pickup
-- One hour on duty for drop-off
-- Fueling for 30 on-duty minutes at every 1,000 route miles, assuming zero miles since fuel at departure
-- No adverse-driving, short-haul, or split-sleeper exception
+- A 30-minute non-driving interruption after 8 cumulative driving hours
+- A maximum of 70 on-duty hours during 8 consecutive days
+- A 34-hour restart when the available simplified cycle balance is exhausted
+- One hour of On Duty, Not Driving time for pickup
+- One hour of On Duty, Not Driving time for drop-off
+- Thirty minutes of On Duty, Not Driving time for fueling
+- Fuel stops at every full 1,000 route miles
+- No adverse-driving, short-haul, or split-sleeper exceptions
 
-Primary references:
+### Daily Driver Logs
 
-- FMCSA Hours of Service summary: https://www.fmcsa.dot.gov/regulations/hours-service/summary-hours-service-regulations
-- 49 CFR § 395.3: https://www.ecfr.gov/current/title-49/subtitle-B/chapter-III/subchapter-B/part-395/subpart-A/section-395.3
-- Supplied FMCSA Driver's Guide: `FMCSA-HOS-395-DRIVERS-GUIDE-TO-HOS (April 2022)`
+- Generates one midnight-to-midnight log for every trip day
+- Displays Off Duty, Sleeper Berth, Driving, and On Duty Not Driving
+- Includes mileage and activity remarks
+- Includes cycle-use and cycle-availability information
+- Confirms that each day's four duty-status totals equal exactly 24 hours
+- Supports browser printing and print-ready output
 
-## Important disclosed limitations
+### Validation
 
-The assessment supplies only a single `current_cycle_used` value. A precise rolling 8-day calculation would also require the driver's on-duty totals for each preceding day. RouteDuty therefore uses a conservative balance model:
+The generated schedule is independently replayed and checked for:
+
+- 11-hour driving-limit compliance
+- 14-hour driving-window compliance
+- 30-minute interruption compliance
+- 70-hour cycle compliance
+- Daily rest requirements
+- 34-hour restart placement
+- Fuel-stop placement
+- Chronological event ordering
+- Daily log boundaries
+- Exact 24-hour duty-status totals
+- Route-mile and driving-duration consistency
+
+---
+
+## Important Scheduling Behaviour
+
+The scheduling engine models driving eligibility separately from general on-duty work.
+
+This means:
+
+- The 11-hour, 14-hour, and 70-hour limits prevent additional driving.
+- Pickup, drop-off, and fueling can finish even when a driving limit has been reached.
+- A required rest or restart is inserted before the next driving segment.
+- Pickup, drop-off, or fueling can satisfy the 30-minute interruption when the activity provides at least 30 consecutive minutes without driving.
+- The route service's returned driving duration is used instead of a fixed average speed.
+- Every daily log uses one explicit home-terminal time zone.
+- Events continuing through midnight are split correctly without creating false status-change remarks.
+
+Detailed scheduling information is available in:
+
+- [`docs/HOS_LOGIC.md`](docs/HOS_LOGIC.md)
+- [`docs/VALIDATION.md`](docs/VALIDATION.md)
+- [`docs/TEST_CASES.md`](docs/TEST_CASES.md)
+
+---
+
+## Assumptions and Limitations
+
+### Cycle Calculation
+
+The assessment provides only one `current_cycle_used` value. A precise rolling eight-day calculation would require the driver's individual on-duty totals for each preceding day.
+
+RouteDuty therefore uses the following simplified balance:
 
 ```text
 available cycle hours = 70 - current cycle used
 ```
 
-When driving eligibility is exhausted, the planner schedules a 34-hour restart. This limitation is shown in the interface and returned in the API assumptions instead of being hidden.
+When the available balance is exhausted, the planner schedules a 34-hour restart before additional driving.
 
-The route is generated with the public OSRM `driving` profile. It is a road-route estimate, not certified commercial-truck navigation and does not account for truck height, weight, hazmat, or local restriction data. En-route stop markers are approximate positions along that route; an operational user must verify a safe, legal, suitable fuel or parking facility.
+This assumption is disclosed in the user interface and API response.
 
-RouteDuty is designed as an assessment planner rather than a production-certified ELD. Trips crossing a daylight-saving transition should be reviewed carefully because operational ELD implementations may apply additional carrier-specific time-handling requirements.
+### Routing
 
-## Technology stack
+The route is generated using a public OSRM driving profile.
+
+It is a general road-route estimate and is not certified commercial-truck navigation. It does not account for:
+
+- Truck height
+- Truck weight
+- Hazardous-material restrictions
+- Commercial vehicle restrictions
+- Bridge clearances
+- Road-specific truck prohibitions
+
+En-route markers are approximate positions along the route. An operational driver would still need to confirm a safe and legal fuel, parking, or rest facility.
+
+---
+
+## Technology Stack
 
 ### Backend
 
-- Python 3.10+
-- Django 5.2 LTS
+- Python
+- Django
 - Django REST Framework
-- `requests`
-- Django cache for geocoding results
-- WhiteNoise and Gunicorn for deployment
+- Requests
+- Django cache
+- WhiteNoise
+- Gunicorn
 
 ### Frontend
 
-- React 18
+- React
 - Vite
-- React Leaflet / Leaflet
-- SVG-based duty-status graph rendering
-- Responsive and print-specific CSS
+- JavaScript
+- React Leaflet
+- Leaflet
+- SVG duty-status graph rendering
+- Responsive CSS
+- Print-specific CSS
 
-### Free mapping services
+### Mapping Services
 
-- Nominatim as the primary geocoding and reverse-geocoding provider
-- Photon as an automatic fallback when Nominatim is temporarily unavailable
-- OSRM for route geometry, distance, estimated duration, and route instructions
-- OpenStreetMap tiles for interactive map display
+- Nominatim for primary geocoding and reverse geocoding
+- Photon as a fallback geocoding service
+- OSRM for route geometry, distance, duration, and instructions
+- OpenStreetMap tiles for map display
 
-Geocoding requests are cached, identified with a project-specific user agent, and rate-limited where required. The fallback provider improves reliability when deploying from shared cloud infrastructure.
+Geocoding requests are cached to reduce repeated external-service calls.
 
-## Project structure
+### Deployment and CI
+
+- Vercel for the React frontend
+- Render for the Django backend
+- GitHub Actions for automated testing and frontend builds
+
+---
+
+## Project Structure
 
 ```text
 route-duty-eld-trip-planner/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+│
 ├── backend/
 │   ├── eld_project/
-│   │   └── settings.py
+│   │   ├── settings.py
+│   │   └── urls.py
+│   │
 │   ├── trips/
-│   │   ├── hos_calculator.py   # HOS scheduling, daily logs, validation
-│   │   ├── mapping.py          # resilient geocoding, fallback, routing, and route helpers
-│   │   ├── serializers.py      # API input validation
-│   │   ├── views.py            # API orchestration
-│   │   └── tests.py            # unit and API tests
-│   ├── scripts/stress_validate_hos.py
+│   │   ├── hos_calculator.py
+│   │   ├── mapping.py
+│   │   ├── serializers.py
+│   │   ├── views.py
+│   │   ├── urls.py
+│   │   └── tests.py
+│   │
+│   ├── scripts/
+│   │   └── stress_validate_hos.py
+│   │
 │   ├── manage.py
 │   └── requirements.txt
+│
 ├── frontend/
-│   ├── public/
-│   │   └── favicon.svg
 │   ├── src/
 │   │   ├── components/
 │   │   ├── App.jsx
 │   │   └── index.css
+│   │
 │   ├── .env.example
-│   ├── package-lock.json
 │   ├── package.json
 │   └── vercel.json
+│
 ├── docs/
+│   ├── screenshots/
+│   │   ├── route-overview.png
+│   │   ├── route-map.png
+│   │   ├── driver-itinerary.png
+│   │   └── daily-log-sheet.png
+│   │
+│   ├── reference/
+│   │   └── blank-paper-log.png
+│   │
 │   ├── HOS_LOGIC.md
 │   ├── TEST_CASES.md
-│   ├── LOOM_SCRIPT.md
-│   ├── SUBMISSION_CHECKLIST.md
 │   ├── VALIDATION.md
-│   └── reference/blank-paper-log.png
-├── .github/workflows/ci.yml
-├── render.yaml
-└── README.md
+│   ├── LOOM_SCRIPT.md
+│   └── SUBMISSION_CHECKLIST.md
+│
+├── .gitignore
+├── README.md
+└── render.yaml
 ```
 
-## Run locally
+---
 
-### 1. Backend
+## Running the Project Locally
 
-From the project root:
+### Requirements
+
+Install the following before starting:
+
+- Python 3.10 or newer
+- Node.js and npm
+- Git
+
+Clone the repository:
+
+```bash
+git clone https://github.com/zaafir7/route-duty-eld-trip-planner.git
+cd route-duty-eld-trip-planner
+```
+
+---
+
+## Backend Setup
+
+Move into the backend folder:
 
 ```bash
 cd backend
+```
+
+Create a Python virtual environment:
+
+```bash
 python -m venv .venv
 ```
 
-Activate the environment:
+Activate it on Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Activate it on Windows Command Prompt:
+
+```cmd
+.venv\Scripts\activate
+```
+
+Activate it on macOS or Linux:
 
 ```bash
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
-
-# Windows Command Prompt
-.venv\Scripts\activate
-
-# macOS/Linux
 source .venv/bin/activate
 ```
 
-Install and run:
+Install the required packages:
 
 ```bash
 pip install -r requirements.txt
+```
+
+Apply database migrations:
+
+```bash
 python manage.py migrate
+```
+
+Start the Django development server:
+
+```bash
 python manage.py runserver
 ```
 
-Django uses safe development defaults locally. To override settings, provide normal operating-system environment variables such as `NOMINATIM_USER_AGENT`, `OSRM_BASE_URL`, or `CORS_ALLOWED_ORIGINS`; Render supplies production variables from `render.yaml`.
+The backend will normally be available at:
 
-Backend URLs:
+```text
+http://localhost:8000
+```
 
-- Health check: `http://localhost:8000/api/health/`
-- Trip endpoint: `http://localhost:8000/api/plan-trip/`
+Backend endpoints:
 
-### 2. Frontend
+```text
+Health check:
+http://localhost:8000/api/health/
 
-Open another terminal from the project root:
+Trip planning:
+http://localhost:8000/api/plan-trip/
+```
+
+---
+
+## Frontend Setup
+
+Open another terminal from the project root and move into the frontend folder:
 
 ```bash
 cd frontend
+```
+
+Install the dependencies:
+
+```bash
 npm install
 ```
 
-Create the environment file:
+Create the local environment file on Windows:
+
+```cmd
+copy .env.example .env
+```
+
+On macOS or Linux:
 
 ```bash
-# Windows
-copy .env.example .env
-
-# macOS/Linux
 cp .env.example .env
 ```
 
-Start Vite:
+The local environment file should contain:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+Start the Vite development server:
 
 ```bash
 npm run dev
 ```
 
-Open the Vite URL, normally `http://localhost:5173`.
+Open the displayed Vite address, normally:
 
-## API request example
+```text
+http://localhost:5173
+```
+
+---
+
+## API Request Example
+
+Endpoint:
+
+```text
+POST /api/plan-trip/
+```
+
+Example request body:
 
 ```json
 {
-  "current_location": "Dallas, TX",
-  "pickup_location": "Oklahoma City, OK",
-  "dropoff_location": "Chicago, IL",
-  "current_cycle_used": 12,
-  "start_time_local": "2026-07-22T08:00",
-  "home_terminal_timezone": "America/Chicago",
+  "current_location": "New York, NY",
+  "pickup_location": "Washington, DC",
+  "dropoff_location": "Miami, FL",
+  "current_cycle_used": 0,
+  "start_time_local": "2026-07-24T08:00",
+  "home_terminal_timezone": "America/New_York",
   "driver_name": "Alex Morgan",
   "carrier_name": "Northstar Freight LLC",
-  "main_office_address": "Dallas, TX",
-  "home_terminal_address": "Dallas, TX",
+  "main_office_address": "New York, NY",
+  "home_terminal_address": "New York, NY",
   "vehicle_numbers": "TRK-101 / TRL-101",
   "shipping_document_number": "BOL-2026-001",
   "manifest_number": "MAN-2026-001",
@@ -227,125 +417,208 @@ Open the Vite URL, normally `http://localhost:5173`.
 }
 ```
 
-The API requires only the four assessment fields. The interface pre-populates a start time and home-terminal time zone so the daily logs are deterministic; the remaining logbook fields are optional.
+Only the following four assessment fields are required:
 
-## Tests and validation
+```text
+current_location
+pickup_location
+dropoff_location
+current_cycle_used
+```
 
-Run the complete backend test suite:
+The interface provides default values for the start time and home-terminal time zone. The remaining logbook fields are optional.
+
+---
+
+## Testing
+
+### Backend Tests
+
+From the backend directory, run:
 
 ```bash
-cd backend
 python manage.py test
 ```
 
-Run the independent randomized HOS replay:
+The project currently includes **22 Django tests**.
+
+Test scenarios include:
+
+- Current-location driving before pickup
+- Route-distance and driving-duration consistency
+- The 30-minute interruption after 8 cumulative driving hours
+- Pickup satisfying the interruption requirement
+- Ten-hour daily rest after the driving limit
+- Fuel at exact 1,000-mile thresholds
+- Multiple fuel thresholds
+- Non-driving work after driving eligibility ends
+- A 34-hour restart before later driving
+- Multiple daily logs
+- Midnight boundary handling
+- Time-zone validation
+- Daylight-saving skipped and repeated times
+- API input validation
+- API response structure
+- Independent itinerary replay
+
+### Randomized HOS Validation
+
+Run the randomized validation script from the backend folder:
 
 ```bash
 python scripts/stress_validate_hos.py
 ```
 
-Build the frontend production bundle:
+The finished project was validated using **5,000 randomized schedule replays**.
+
+### Frontend Production Build
+
+From the frontend directory, run:
 
 ```bash
-cd frontend
 npm run build
 ```
 
-Verified locally before deployment:
+### Frontend Dependency Audit
 
-- 22 Django tests passed
-- 5,000 independent randomized HOS replays passed
-- Django system checks passed
-- Frontend production build passed
-- `npm audit` reported 0 vulnerabilities
-- Short, multi-day, fuel-stop, cycle-restart, invalid-location, and print scenarios passed
-- The live Render/Vercel deployment passed both a simple route and a long-route acceptance test
+```bash
+npm audit
+```
 
-Test coverage includes:
-
-- Current-to-pickup driving before pickup
-- Map-duration consistency
-- 30-minute interruption after 8 cumulative driving hours
-- Pickup satisfying the break requirement
-- 10-hour daily reset after 11 driving hours
-- Fuel at the exact final 1,000-mile threshold
-- Non-driving work completing after the 70-hour point
-- A 34-hour restart occurring before subsequent driving
-- Multiple 24-hour daily logs in the home-terminal time basis
-- Non-driving service after the 14-hour driving window
-- Daylight-saving skipped and repeated departure times
-- Multiple 1,000-mile fuel thresholds
-- API validation and response structure
-- Randomized schedule replay through the independent validator
-
-See [`docs/VALIDATION.md`](docs/VALIDATION.md) for the independent stress replay and [`docs/TEST_CASES.md`](docs/TEST_CASES.md) for the manual review checklist.
+---
 
 ## Deployment
 
-### Backend — Render
+### Backend Deployment on Render
 
-The Django REST API is deployed at:
+The backend deployment is configured using `render.yaml`.
+
+General deployment process:
+
+1. Push the repository to GitHub.
+2. Create a Render Blueprint from the repository.
+3. Allow Render to read the `render.yaml` configuration.
+4. Deploy the Django backend.
+5. Copy the generated Render service URL.
+
+Production backend:
 
 ```text
 https://routeduty-api.onrender.com
 ```
 
-Health endpoint:
+Health check:
 
 ```text
 https://routeduty-api.onrender.com/api/health/
 ```
 
-Deployment configuration is defined in `render.yaml` and uses:
+### Frontend Deployment on Vercel
 
-- Python runtime
-- Gunicorn production server
-- WhiteNoise static-file handling
-- Automatic Django migrations
-- Automatic health checks
-- A free Render web-service instance
+General deployment process:
 
-Production variables include `SECRET_KEY`, `DEBUG=False`, and an identifying `NOMINATIM_USER_AGENT`.
+1. Import the GitHub repository into Vercel.
+2. Set the project root directory to `frontend`.
+3. Add the production environment variable:
 
-The free service may sleep after inactivity, so the first request can take longer while the backend wakes.
+```env
+VITE_API_BASE_URL=https://routeduty-api.onrender.com
+```
 
-### Frontend — Vercel
+4. Deploy the frontend.
 
-The React application is deployed at:
+Production frontend:
 
 ```text
 https://route-duty-eld-trip-planner.vercel.app
 ```
 
-Vercel is configured with:
+---
+
+## Continuous Integration
+
+The GitHub Actions workflow runs automatically when code is pushed or a pull request is created.
+
+The workflow checks:
+
+- Django tests
+- Frontend dependency installation
+- Frontend production build
+
+Workflow file:
 
 ```text
-Root directory: frontend
-Framework preset: Vite
-Build command: npm run build
-Output directory: dist
+.github/workflows/ci.yml
 ```
 
-The frontend communicates with the deployed Django API through:
+---
 
-```text
-VITE_API_BASE_URL=https://routeduty-api.onrender.com
-```
+## Assessment Deliverables
 
-Future pushes to the GitHub `main` branch automatically trigger new deployments.
+- Live React application
+- Live Django REST API
+- Public GitHub repository
+- Route mapping
+- Hours-of-Service scheduling
+- Daily driver log sheets
+- Automated backend tests
+- Randomized HOS validation
+- GitHub Actions workflow
+- Deployment documentation
+- Application screenshots
+- Loom walkthrough
 
-## Screenshots
+---
 
-Screenshots of the live map, itinerary, and generated daily log sheets will be added before final submission.
+## Loom Walkthrough
 
-## Loom walkthrough
+A live walkthrough of the deployed application is available here:
 
-A timed 3–5 minute walkthrough is included in [`docs/LOOM_SCRIPT.md`](docs/LOOM_SCRIPT.md).
+https://www.loom.com/share/fd6d843e3637418abd2d773c78c242c9
 
-**Video link:** Coming soon
+The walkthrough demonstrates:
 
-The final deployment and handoff steps are documented in [`docs/SUBMISSION_CHECKLIST.md`](docs/SUBMISSION_CHECKLIST.md).
+- Live trip generation
+- Route summary
+- Map and route markers
+- Chronological trip schedule
+- Generated daily logs
+- Backend scheduling code
+- Automated tests
+- GitHub repository and deployment
+
+---
+
+## References
+
+The scheduling assumptions were based on:
+
+- FMCSA Hours of Service regulations for property-carrying drivers
+- 49 CFR § 395.3
+- The supplied FMCSA Driver's Guide to Hours of Service
+
+Additional implementation details are documented in the `docs` directory.
+
+---
 
 ## Disclaimer
 
-RouteDuty is a hiring-assessment demonstration. It is not a certified ELD, dispatch system, carrier compliance service, or commercial-truck navigation product.
+RouteDuty is a hiring-assessment demonstration.
+
+It is not:
+
+- A certified Electronic Logging Device
+- A commercial dispatch system
+- A carrier compliance service
+- Legal or regulatory advice
+- Certified commercial-truck navigation software
+
+Routes, stop locations, driving times, and generated logs must be independently verified before any real-world operational use.
+
+---
+
+## Author
+
+**Muhammad Zaafir Zia**
+
+GitHub: https://github.com/zaafir7
