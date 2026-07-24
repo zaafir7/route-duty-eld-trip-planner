@@ -12,6 +12,15 @@
 
 The required stack is **Django REST Framework** and **React/Vite**.
 
+## Live application
+
+- **Live frontend:** https://route-duty-eld-trip-planner.vercel.app
+- **Backend health check:** https://routeduty-api.onrender.com/api/health/
+- **GitHub repository:** https://github.com/zaafir7/route-duty-eld-trip-planner
+- **Video walkthrough:** Coming soon
+
+> The backend runs on Render's free tier and may require a short cold-start period after inactivity.
+
 ## Why this implementation is reliable
 
 The scheduling engine independently models driving eligibility rather than treating every HOS limit as a ban on work. In particular:
@@ -50,7 +59,7 @@ Primary references:
 - 49 CFR § 395.3: https://www.ecfr.gov/current/title-49/subtitle-B/chapter-III/subchapter-B/part-395/subpart-A/section-395.3
 - Supplied FMCSA Driver's Guide: `FMCSA-HOS-395-DRIVERS-GUIDE-TO-HOS (April 2022)`
 
-## Important disclosed limitation
+## Important disclosed limitations
 
 The assessment supplies only a single `current_cycle_used` value. A precise rolling 8-day calculation would also require the driver's on-duty totals for each preceding day. RouteDuty therefore uses a conservative balance model:
 
@@ -61,6 +70,8 @@ available cycle hours = 70 - current cycle used
 When driving eligibility is exhausted, the planner schedules a 34-hour restart. This limitation is shown in the interface and returned in the API assumptions instead of being hidden.
 
 The route is generated with the public OSRM `driving` profile. It is a road-route estimate, not certified commercial-truck navigation and does not account for truck height, weight, hazmat, or local restriction data. En-route stop markers are approximate positions along that route; an operational user must verify a safe, legal, suitable fuel or parking facility.
+
+RouteDuty is designed as an assessment planner rather than a production-certified ELD. Trips crossing a daylight-saving transition should be reviewed carefully because operational ELD implementations may apply additional carrier-specific time-handling requirements.
 
 ## Technology stack
 
@@ -83,22 +94,23 @@ The route is generated with the public OSRM `driving` profile. It is a road-rout
 
 ### Free mapping services
 
-- Nominatim for geocoding and reverse geocoding
-- OSRM for route geometry, route distance, duration, and instructions
-- OpenStreetMap tiles for display
+- Nominatim as the primary geocoding and reverse-geocoding provider
+- Photon as an automatic fallback when Nominatim is temporarily unavailable
+- OSRM for route geometry, distance, estimated duration, and route instructions
+- OpenStreetMap tiles for interactive map display
 
-Nominatim calls are cached, serialised, and rate-limited to respect its public-use policy.
+Geocoding requests are cached, identified with a project-specific user agent, and rate-limited where required. The fallback provider improves reliability when deploying from shared cloud infrastructure.
 
 ## Project structure
 
 ```text
-eld-trip-planner/
+route-duty-eld-trip-planner/
 ├── backend/
 │   ├── eld_project/
 │   │   └── settings.py
 │   ├── trips/
 │   │   ├── hos_calculator.py   # HOS scheduling, daily logs, validation
-│   │   ├── mapping.py          # geocoding, routing, reverse geocoding
+│   │   ├── mapping.py          # resilient geocoding, fallback, routing, and route helpers
 │   │   ├── serializers.py      # API input validation
 │   │   ├── views.py            # API orchestration
 │   │   └── tests.py            # unit and API tests
@@ -106,11 +118,14 @@ eld-trip-planner/
 │   ├── manage.py
 │   └── requirements.txt
 ├── frontend/
+│   ├── public/
+│   │   └── favicon.svg
 │   ├── src/
 │   │   ├── components/
 │   │   ├── App.jsx
 │   │   └── index.css
 │   ├── .env.example
+│   ├── package-lock.json
 │   ├── package.json
 │   └── vercel.json
 ├── docs/
@@ -214,7 +229,7 @@ Open the Vite URL, normally `http://localhost:5173`.
 
 The API requires only the four assessment fields. The interface pre-populates a start time and home-terminal time zone so the daily logs are deterministic; the remaining logbook fields are optional.
 
-## Tests
+## Tests and validation
 
 Run the complete backend test suite:
 
@@ -223,12 +238,28 @@ cd backend
 python manage.py test
 ```
 
+Run the independent randomized HOS replay:
+
+```bash
+python scripts/stress_validate_hos.py
+```
+
 Build the frontend production bundle:
 
 ```bash
 cd frontend
 npm run build
 ```
+
+Verified locally before deployment:
+
+- 22 Django tests passed
+- 5,000 independent randomized HOS replays passed
+- Django system checks passed
+- Frontend production build passed
+- `npm audit` reported 0 vulnerabilities
+- Short, multi-day, fuel-stop, cycle-restart, invalid-location, and print scenarios passed
+- The live Render/Vercel deployment passed both a simple route and a long-route acceptance test
 
 Test coverage includes:
 
@@ -245,7 +276,7 @@ Test coverage includes:
 - Daylight-saving skipped and repeated departure times
 - Multiple 1,000-mile fuel thresholds
 - API validation and response structure
-- Randomised schedule replay through the independent validator
+- Randomized schedule replay through the independent validator
 
 See [`docs/VALIDATION.md`](docs/VALIDATION.md) for the independent stress replay and [`docs/TEST_CASES.md`](docs/TEST_CASES.md) for the manual review checklist.
 
@@ -253,32 +284,67 @@ See [`docs/VALIDATION.md`](docs/VALIDATION.md) for the independent stress replay
 
 ### Backend — Render
 
-1. Push the repository to GitHub.
-2. Create a Render Blueprint from the repository.
-3. Render reads `render.yaml` and deploys the `backend` directory using the current Blueprint `runtime: python` format.
-4. Copy the deployed API URL.
-
-The public Nominatim policy asks applications to identify themselves. Set a more specific value in Render when the repository URL is available:
+The Django REST API is deployed at:
 
 ```text
-NOMINATIM_USER_AGENT=RouteDuty/1.0 (https://github.com/your-user/your-repository)
+https://routeduty-api.onrender.com
 ```
+
+Health endpoint:
+
+```text
+https://routeduty-api.onrender.com/api/health/
+```
+
+Deployment configuration is defined in `render.yaml` and uses:
+
+- Python runtime
+- Gunicorn production server
+- WhiteNoise static-file handling
+- Automatic Django migrations
+- Automatic health checks
+- A free Render web-service instance
+
+Production variables include `SECRET_KEY`, `DEBUG=False`, and an identifying `NOMINATIM_USER_AGENT`.
+
+The free service may sleep after inactivity, so the first request can take longer while the backend wakes.
 
 ### Frontend — Vercel
 
-1. Import the same repository into Vercel.
-2. Set the root directory to `frontend`.
-3. Add:
+The React application is deployed at:
 
 ```text
-VITE_API_BASE_URL=https://your-render-service.onrender.com
+https://route-duty-eld-trip-planner.vercel.app
 ```
 
-4. Deploy.
+Vercel is configured with:
+
+```text
+Root directory: frontend
+Framework preset: Vite
+Build command: npm run build
+Output directory: dist
+```
+
+The frontend communicates with the deployed Django API through:
+
+```text
+VITE_API_BASE_URL=https://routeduty-api.onrender.com
+```
+
+Future pushes to the GitHub `main` branch automatically trigger new deployments.
+
+## Screenshots
+
+Screenshots of the live map, itinerary, and generated daily log sheets will be added before final submission.
 
 ## Loom walkthrough
 
-A timed 3–5 minute walkthrough is included in [`docs/LOOM_SCRIPT.md`](docs/LOOM_SCRIPT.md). The final deployment and handoff steps are in [`docs/SUBMISSION_CHECKLIST.md`](docs/SUBMISSION_CHECKLIST.md).
+A timed 3–5 minute walkthrough is included in [`docs/LOOM_SCRIPT.md`](docs/LOOM_SCRIPT.md).
+
+**Video link:** Coming soon
+
+The final deployment and handoff steps are documented in [`docs/SUBMISSION_CHECKLIST.md`](docs/SUBMISSION_CHECKLIST.md).
 
 ## Disclaimer
 
