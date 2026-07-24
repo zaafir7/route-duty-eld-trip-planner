@@ -13,6 +13,8 @@ from django.core.cache import cache
 
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
+PHOTON_SEARCH_URL = "https://photon.komoot.io/api/"
+PHOTON_REVERSE_URL = "https://photon.komoot.io/reverse"
 OSRM_BASE_URL = os.environ.get("OSRM_BASE_URL", "https://router.project-osrm.org")
 NOMINATIM_MIN_INTERVAL_SECONDS = 1.05
 
@@ -121,58 +123,221 @@ def _short_location(address: dict, display_name: str = "") -> str:
     return city or state or display_name
 
 
-def geocode(place_name: str) -> dict | None:
-    query = " ".join(place_name.split())
-    payload = _cached_json(
-        f"geocode:{query.casefold()}",
-        NOMINATIM_SEARCH_URL,
-        {
-            "q": query,
-            "format": "jsonv2",
-            "limit": 1,
-            "addressdetails": 1,
-            "countrycodes": "us",
-        },
-        rate_limited=True,
+
+def _photon_short_location(properties: dict, fallback: str = "") -> str:
+    city = next(
+        (
+            properties.get(key)
+            for key in ("city", "town", "village", "district", "county")
+            if properties.get(key)
+        ),
+        "",
     )
-    if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
-        return None
+    state = properties.get("state", "")
+    state_code = properties.get("statecode", "")
+    country_code = str(properties.get("countrycode", "")).upper()
 
-    item = payload[0]
+    if country_code == "US":
+        abbreviation = state_code or US_STATE_ABBREVIATIONS.get(state, state)
+        if city and abbreviation:
+            return f"{city}, {abbreviation}"
+        return city or abbreviation or fallback
+
+    if city and state:
+        return f"{city}, {state}"
+    if city and country_code:
+        return f"{city}, {country_code}"
+    return city or state or fallback
+
+
+def _photon_geocode(place_name: str) -> tuple[dict | None, bool]:
+    """Return (result, service_reachable).
+
+    `service_reachable` distinguishes an unknown location from a provider outage.
+    """
+
+    query = " ".join(place_name.split())
+    cache_key = f"geocode:photon:{query.casefold()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached, True
+
     try:
-        latitude = float(item["lat"])
-        longitude = float(item["lon"])
-    except (KeyError, TypeError, ValueError):
-        return None
+        response = _session().get(
+            PHOTON_SEARCH_URL,
+            params={"q": query, "limit": 1, "lang": "en"},
+            headers=_headers(),
+            timeout=25,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return None, False
 
-    address = item.get("address", {})
-    display_name = item.get("display_name", query)
-    return {
+    features = payload.get("features", []) if isinstance(payload, dict) else []
+    if not features or not isinstance(features[0], dict):
+        cache.set(cache_key, None, timeout=60 * 60)
+        return None, True
+
+    feature = features[0]
+    geometry = feature.get("geometry", {})
+    properties = feature.get("properties", {})
+    coordinates = geometry.get("coordinates", [])
+
+    if (
+        not isinstance(coordinates, list)
+        or len(coordinates) < 2
+        or not isinstance(properties, dict)
+    ):
+        return None, False
+
+    try:
+        longitude = float(coordinates[0])
+        latitude = float(coordinates[1])
+    except (TypeError, ValueError):
+        return None, False
+
+    country_code = str(properties.get("countrycode", "")).upper()
+    if country_code and country_code != "US":
+        cache.set(cache_key, None, timeout=60 * 60)
+        return None, True
+
+    display_name_parts = [
+        properties.get("name"),
+        properties.get("city"),
+        properties.get("state"),
+        properties.get("country"),
+    ]
+    display_name = ", ".join(
+        str(part) for part in display_name_parts if part
+    ) or query
+
+    result = {
         "name": query,
         "display_name": display_name,
-        "short_name": _short_location(address, display_name) or query,
+        "short_name": _photon_short_location(properties, display_name) or query,
         "lat": latitude,
         "lon": longitude,
     }
+    cache.set(cache_key, result, timeout=60 * 60 * 24 * 30)
+    return result, True
+
+
+def geocode(place_name: str) -> dict | None:
+    query = " ".join(place_name.split())
+    nominatim_reachable = True
+
+    try:
+        payload = _cached_json(
+            f"geocode:nominatim:{query.casefold()}",
+            NOMINATIM_SEARCH_URL,
+            {
+                "q": query,
+                "format": "jsonv2",
+                "limit": 1,
+                "addressdetails": 1,
+                "countrycodes": "us",
+            },
+            rate_limited=True,
+        )
+    except MappingServiceError:
+        nominatim_reachable = False
+        payload = []
+
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        item = payload[0]
+        try:
+            latitude = float(item["lat"])
+            longitude = float(item["lon"])
+        except (KeyError, TypeError, ValueError):
+            latitude = None
+            longitude = None
+
+        if latitude is not None and longitude is not None:
+            address = item.get("address", {})
+            display_name = item.get("display_name", query)
+            return {
+                "name": query,
+                "display_name": display_name,
+                "short_name": _short_location(address, display_name) or query,
+                "lat": latitude,
+                "lon": longitude,
+            }
+
+    photon_result, photon_reachable = _photon_geocode(query)
+    if photon_result is not None:
+        return photon_result
+
+    if nominatim_reachable or photon_reachable:
+        return None
+
+    raise MappingServiceError("The mapping service is temporarily unavailable.")
+
+
+def _photon_reverse_geocode(lat: float, lon: float) -> str:
+    cache_key = f"reverse:photon:{round(lat, 4)}:{round(lon, 4)}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        response = _session().get(
+            PHOTON_REVERSE_URL,
+            params={
+                "lat": f"{lat:.6f}",
+                "lon": f"{lon:.6f}",
+                "limit": 1,
+                "lang": "en",
+            },
+            headers=_headers(),
+            timeout=25,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return ""
+
+    features = payload.get("features", []) if isinstance(payload, dict) else []
+    if not features or not isinstance(features[0], dict):
+        return ""
+
+    properties = features[0].get("properties", {})
+    if not isinstance(properties, dict):
+        return ""
+
+    location = _photon_short_location(properties)
+    if location:
+        cache.set(cache_key, location, timeout=60 * 60 * 24 * 30)
+    return location
 
 
 def reverse_geocode(lat: float, lon: float) -> str:
-    cache_key = f"reverse:{round(lat, 4)}:{round(lon, 4)}"
-    payload = _cached_json(
-        cache_key,
-        NOMINATIM_REVERSE_URL,
-        {
-            "lat": f"{lat:.6f}",
-            "lon": f"{lon:.6f}",
-            "format": "jsonv2",
-            "zoom": 10,
-            "addressdetails": 1,
-        },
-        rate_limited=True,
-    )
+    cache_key = f"reverse:nominatim:{round(lat, 4)}:{round(lon, 4)}"
+
+    try:
+        payload = _cached_json(
+            cache_key,
+            NOMINATIM_REVERSE_URL,
+            {
+                "lat": f"{lat:.6f}",
+                "lon": f"{lon:.6f}",
+                "format": "jsonv2",
+                "zoom": 10,
+                "addressdetails": 1,
+            },
+            rate_limited=True,
+        )
+    except MappingServiceError:
+        payload = {}
+
     address = payload.get("address", {}) if isinstance(payload, dict) else {}
     display_name = payload.get("display_name", "") if isinstance(payload, dict) else ""
-    return _short_location(address, display_name)
+    location = _short_location(address, display_name)
+
+    if location:
+        return location
+
+    return _photon_reverse_geocode(lat, lon)
 
 
 def _instruction_text(step: dict) -> str:
