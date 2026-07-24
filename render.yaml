@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: routeduty-api
+    runtime: python
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput"
+    startCommand: "gunicorn eld_project.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 150"
+    healthCheckPath: /api/health/
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: NOMINATIM_USER_AGENT
+        value: "RouteDuty/1.0 (Django-React hiring assessment)"
